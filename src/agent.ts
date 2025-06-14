@@ -22,13 +22,12 @@ class MiniAgent {
   }
 
   private getApiKey(): string {
-    try {
-      const keyPath = join(homedir(), '.lace', 'api-keys', 'anthropic');
-      return readFileSync(keyPath, 'utf8').trim();
-    } catch (error) {
-      console.error('Failed to read API key from ~/.lace/api-keys/anthropic');
+    const apiKey = process.env.ANTHROPIC_KEY;
+    if (!apiKey) {
+      console.error('ANTHROPIC_KEY environment variable is required');
       process.exit(1);
     }
+    return apiKey;
   }
 
   private async executeBash(command: string): Promise<string> {
@@ -46,59 +45,46 @@ class MiniAgent {
   private async callClaude(userMessage: string): Promise<string> {
     this.conversation.push({ role: 'user', content: userMessage });
 
-    const systemPrompt = `You are a coding assistant with access to bash commands. 
-You can help with any programming task by executing bash commands.
-
-When you need to run a command, format it like this:
-BASH: command_here
-
-I will execute the command and return the result. You can then respond based on the output.
-You can run multiple commands by including multiple BASH: lines in your response.
-
-Be concise and practical. Focus on solving the user's problem efficiently.`;
-
-    return await this.processClaudeResponse(systemPrompt);
-  }
-
-  private async processClaudeResponse(systemPrompt: string): Promise<string> {
-    try {
-      const response = await this.anthropic.messages.create({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 4000,
-        system: systemPrompt,
-        messages: this.conversation,
-      });
-
-      const content = response.content[0];
-      if (content.type !== 'text') {
-        throw new Error('Unexpected response type');
+    const tools = [{
+      name: 'bash',
+      description: 'Execute bash commands',
+      input_schema: {
+        type: 'object' as const,
+        properties: { command: { type: 'string' } },
+        required: ['command']
       }
+    }];
 
-      let responseText = content.text;
-      
-      // Check if Claude wants to run a bash command
-      const bashMatch = responseText.match(/BASH:\s*(.+)$/m);
-      if (bashMatch) {
-        const command = bashMatch[1].trim();
-        console.log(`\n🔧 Running: ${command}`);
-        
-        const output = await this.executeBash(command);
+    const response = await this.anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4000,
+      system: 'You are a coding assistant. Use the bash tool to help with programming tasks.',
+      messages: this.conversation,
+      tools,
+    });
+
+    this.conversation.push({ role: 'assistant', content: response.content });
+
+    // Execute any tool calls
+    for (const content of response.content) {
+      if (content.type === 'tool_use' && content.name === 'bash') {
+        const input = content.input as { command: string };
+        console.log(`\n🔧 Running: ${input.command}`);
+        const output = await this.executeBash(input.command);
         console.log(output);
         
-        // Add this response and command output to conversation
-        this.conversation.push({ role: 'assistant', content: responseText });
-        this.conversation.push({ role: 'user', content: `Command output:\n${output}` });
+        this.conversation.push({
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: content.id, content: output }]
+        });
         
-        // Recursively process Claude's response to the command output
-        return await this.processClaudeResponse(systemPrompt);
+        // Get final response after tool execution
+        return await this.callClaude('');
       }
-
-      // No more bash commands, return final response
-      this.conversation.push({ role: 'assistant', content: responseText });
-      return responseText;
-    } catch (error: any) {
-      return `Error calling Claude: ${error.message}`;
     }
+
+    // Return text response
+    return response.content.find(c => c.type === 'text')?.text || '';
   }
 
   async start() {
