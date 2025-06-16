@@ -8,7 +8,7 @@ import * as readline from "readline";
 // Initialize Claude client and conversation state
 const anthropic = new Anthropic({ apiKey: process.env.API_KEY }),
   conversation = [], // Chat history for context
-  interface = readline.createInterface({ input: process.stdin, output: process.stdout }),
+  user_interface = readline.createInterface({ input: process.stdin, output: process.stdout }),
   log = console.log,
 
 // Main agent function - handles user input and tool execution
@@ -63,6 +63,6 @@ agent = async userInput => {
 
 // Main loop - get user input and process with agent (exit with Ctrl+C)
 let input;
-while (input = await new Promise(resolve => interface.question("> ", resolve))) {
+while (input = await new Promise(resolve => user_interface.question("> ", resolve))) {
   log(await agent(input));
 }
