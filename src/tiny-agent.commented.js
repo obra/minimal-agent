@@ -1,0 +1,45 @@
+import A from "@anthropic-ai/sdk";
+import { execSync as e } from "child_process";
+import * as r from "readline";
+const a = new A({ apiKey: process.env.API_KEY }),
+  c = [],
+  l = r.createInterface({ input: process.stdin, output: process.stdout }),
+  p = console.log,
+f = async u => {
+  u && c.push({ role: "user", content: u });
+  let s = await a.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 4e3,
+    messages: c,
+    system: "Coder w/ bash",
+    tools: [
+      {
+        name: "bash",
+        description: "sh",
+        input_schema: {
+          type: "object",
+          properties: { cmd: { type: "string" } },
+        },
+      },
+    ],
+  });
+  c.push({ role: "assistant", content: s.content });
+  for (let t of s.content)
+    if (t.type == "tool_use") {
+      p("🔧", t.input.cmd);
+      try {
+        var o = e(t.input.cmd).toString();
+      } catch (x) {
+        o = "❌" + x.message;
+      }
+      p(o);
+      c.push({
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: t.id, content: o }],
+      });
+      return f();
+    }
+   return s.content.find(t => t.type == "text")?.text;
+}
+let i;while(i=await new Promise(v=>l.question("> ",v)))
+  p(await f(i));
